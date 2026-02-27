@@ -1,0 +1,82 @@
+import jwt from "jsonwebtoken";
+import User from "../src/Models/user.model.js";
+
+export const validateJWT = async (req, res, next) => {
+  const jwtConfig = {
+    secret: process.env.JWT_SECRET,
+    issuer: process.env.JWT_ISSUER,
+    audience: process.env.JWT_AUDIENCE
+  };
+
+  if (!jwtConfig.secret) {
+    console.error("Error de validación JWT: JWT_SECRET no está definido");
+    return res.status(500).json({
+      success: false,
+      message: "Configuración del servidor inválida: falta JWT_SECRET"
+    });
+  }
+
+  const token =
+    req.header("x-token") ||
+    req.header("Authorization")?.replace("Bearer ", "");
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: "No se proporcionó un token",
+      error: "MISSING_TOKEN"
+    });
+  }
+
+  try {
+    const verifyOptions = {};
+    if (jwtConfig.issuer) verifyOptions.issuer = jwtConfig.issuer;
+    if (jwtConfig.audience) verifyOptions.audience = jwtConfig.audience;
+
+    const decoded = jwt.verify(token, jwtConfig.secret, verifyOptions);
+
+    req.auth = {
+      sub: decoded.sub,
+      jti: decoded.jti,
+      iat: decoded.iat,
+      role: decoded.role || "USER_ROLE"
+    };
+
+    const user = await User.findById(decoded.sub).select("-passwordHash");
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Token válido pero usuario no existe",
+        error: "USER_NOT_FOUND"
+      });
+    }
+
+    req.user = user;
+
+    return next();
+  } catch (error) {
+    console.error("Error de validación JWT:", error.message);
+
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "El token ha expirado",
+        error: "TOKEN_EXPIRED"
+      });
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      return res.status(401).json({
+        success: false,
+        message: "Token inválido",
+        error: "INVALID_TOKEN"
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error al validar el token",
+      error: "TOKEN_VALIDATION_ERROR"
+    });
+  }
+};
